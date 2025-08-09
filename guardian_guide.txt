@@ -1,0 +1,136 @@
+ROMPT MASTER DEFINITIVO PER TRAE.AI (EDIZIONE "GUARDIAN" - FINALE AGOSTO 2025)
+TITOLO DEL PROGETTO: Sistema di Trading Autonomo "Guardian" - Architettura Resiliente di Livello Enterprise, Ottimizzata per Hardware Specifico (RTX 5080, 16GB RAM, Ryzen 7 3800X).
+
+OBIETTIVO FINALE:
+Agirai come Architetto AI Senior e Lead Engineer. Il tuo compito è generare, passo dopo passo, il codice Python completo per un sistema di trading autonomo. Il sistema deve essere robusto, sicuro e ottimizzato per funzionare in modo efficiente sull'hardware specifico fornito, tenendo conto dei suoi limiti.
+
+MANDATO TECNICO E REGOLE NON NEGOZIABILI
+RICERCA WEB OBBLIGATORIA, MEMORIA INTERNA VIETATA: La tua conoscenza interna è obsoleta. Per ogni singola libreria, devi eseguire una nuova ricerca web ORA per trovare la documentazione ufficiale e l'ultima versione stabile compatibile di Agosto 2025.
+
+RISPETTO ASSOLUTO DELLO STACK E DELL'HARDWARE: Non sei autorizzato a sostituire alcun componente. Il sistema deve essere progettato per funzionare sull'hardware specificato:
+
+GPU: NVIDIA RTX 5080 (16GB VRAM)
+
+CPU: AMD Ryzen 7 3800X (8-core, Zen 2)
+
+RAM: 16GB DDR4
+
+OS: Windows 11 (64-bit)
+
+SICUREZZA PRIMA DI TUTTO: Il Risk Guardian Agent e l'analisi Walk-Forward sono i pilastri del progetto e non sono negoziabili.
+
+PROCEDURA A STEP CON TEST OBBLIGATORI: Seguirai gli step in ordine numerico. Al termine di ogni step di codifica, genererai lo script di test associato. Non procederai allo step successivo finché non ti verrà data conferma che il test è stato superato.
+
+STACK TECNOLOGICO DEFINITIVO (Versione Finale, Verificata e Ottimizzata)
+Piattaforma OS e Driver:
+
+Driver NVIDIA: Versione 580.xx o la più recente "Game Ready" disponibile ad Agosto 2025.
+
+CUDA Toolkit: CUDA 13.0 (rilasciato Agosto 2025, pienamente compatibile con RTX 5080).
+
+Core AI e LLM (Adattato per 16GB VRAM):
+
+Piattaforma Esecuzione: Ollama per Windows.
+
+Modello Primario: DeepSeek-R1-Distill-Qwen-14B (Q4_K_M) (~9GB VRAM).
+
+Modello Secondario (per analisi leggere): DeepSeek-R1-7B (~4.7GB VRAM).
+
+Framework Agenti e Orchestrazione:
+
+Orchestrazione: LangGraph v0.10.69.
+
+Definizione Ruoli: CrewAI v0.157.0.
+
+Logica Finanziaria: TradingAgents (ultima versione dal repository GitHub di TauricResearch).
+
+Memoria e Apprendimento:
+
+Database Vettoriale: Weaviate v1.29.0 (tramite Docker).
+
+Backtesting e Ottimizzazione:
+
+Motore di Backtest: Backtrader v1.9.78.123.
+
+Metodologia di Test: Walk-Forward Optimization obbligatoria.
+
+Ottimizzazione Genetica: DEAP v1.4.3.
+
+Dati e Dashboard:
+
+Fonti Dati: python-binance, polygon-api-client, alpha-vantage.
+
+Dashboard di Monitoraggio: Streamlit v1.47.
+
+GUIDA ALLA COSTRUZIONE (STEP-BY-STEP PER TRAE.AI)
+STEP 0: ANALISI FINALE DI FATTIBILITÀ E CONSAPEVOLEZZA HARDWARE
+Azione: Esegui ricerche e genera un report che includa:
+
+Conferma Compatibilità: Link per il download di CUDA 13.0, driver NVIDIA 580.xx, Python 3.13.6 e le versioni esatte di tutte le librerie dello stack.
+
+Analisi Limiti Hardware: Scrivi una breve nota che confermi la comprensione dei limiti. Esempio: "Il sistema sarà ottimizzato per 16GB di RAM, ma si raccomanda all'utente un upgrade a 32GB per performance ottimali. La CPU Ryzen 7 3800X è adeguata per l'inferenza ma potrebbe essere lenta nel backtesting di grandi dataset. Il codice terrà conto di queste limitazioni."
+
+STEP 1: SETUP AMBIENTE "BULLETPROOF"
+Azione: Genera i file di configurazione e la guida all'installazione.
+
+guida_installazione_definitiva.md: Guida passo-passo per installare tutti i prerequisiti (CUDA 13.0, Docker, ecc.) e configurare l'ambiente virtuale. Include i comandi ollama pull per i modelli 14B e 7B.
+
+requirements.txt: Genera il file con le versioni esatte, inclusa backtrader==1.9.78.123.
+
+docker-compose.yml: Configurazione per weaviate:1.29.0.
+
+.env.template: Aggiorna con i nomi dei modelli corretti e tutte le API key necessarie.
+
+STEP 2: IMPLEMENTAZIONE DEL "RISK GUARDIAN AGENT"
+Azione: Implementa e testa il componente di sicurezza fondamentale.
+
+File src/risk_guardian.py: Crea la classe RiskGuardianAgent con i limiti non negoziabili (perdita giornaliera 3%, drawdown 10%, etc.). Il metodo veto_trade() deve essere robusto e ben documentato.
+
+File tests/test_risk_guardian.py: Scrivi test unitari che verifichino ogni singola regola di veto.
+
+CHECKPOINT 1: Fermati e attendi conferma che i test del Risk Guardian siano superati.
+
+STEP 3: SISTEMA DI MEMORIA E STRUMENTI DI TRADING
+Azione: Costruisci il "cervello" e i "sensi" del sistema.
+
+File src/advanced_memory_system.py: Implementa la classe per interagire con Weaviate, ispirata ai concetti di MIRIX (memoria episodica per i trade, semantica per le riflessioni).
+
+File src/trading_tools.py: Implementa le funzioni per connettersi alle API di dati (Polygon, Alpha Vantage, Binance) in modo asincrono per efficienza.
+
+File tests/: Crea i file di test per la memoria (salvataggio e query) e per ogni strumento API.
+
+CHECKPOINT 2: Fermati e attendi conferma del superamento dei test.
+
+STEP 4: BACKTESTING PROFESSIONALE CON WALK-FORWARD
+Azione: Sviluppa il motore di backtesting che previene l'illusione di profitti facili.
+
+File src/walk_forward_engine.py: Crea una classe WalkForwardOptimizer che usa Backtrader. Implementa la logica di ottimizzazione Walk-Forward (es. ottimizza su 1 anno, valida su 3 mesi, sposta la finestra). La classe deve generare un report dettagliato sulla performance "out-of-sample".
+
+CHECKPOINT 3: Fermati. Questo è uno step complesso e richiede una verifica concettuale del report generato.
+
+STEP 5: CREAZIONE DEGLI AGENTI SPECIALIZZATI E ORCHESTRAZIONE
+Azione: Definisci il team di agenti e il loro flusso di lavoro.
+
+File src/agents.py: Definisci gli agenti usando CrewAI per i ruoli: MarketAnalystAgent, SentimentAnalystAgent, TechnicalAnalystAgent, StrategySynthesisAgent, ExecutionAgent.
+
+File src/main_orchestrator.py: Usa LangGraph per definire il flusso di stato:
+
+Gli analisti lavorano in parallelo.
+
+StrategySynthesisAgent aggrega le analisi e propone un trade.
+
+Il RiskGuardianAgent riceve la proposta. Se veto_trade() è True, il ciclo si interrompe e si passa alla riflessione.
+
+Se approvato, ExecutionAgent calcola la size e invia l'ordine (simulato o reale).
+
+L'esito viene salvato nella memoria.
+
+STEP 6: INTEGRAZIONE FINALE E DASHBOARD DI CONTROLLO
+Azione: Assembla il sistema e crea l'interfaccia di monitoraggio.
+
+File dashboard.py: Usa Streamlit per creare una dashboard interattiva che mostri P&L in tempo reale, posizioni aperte, log delle decisioni degli agenti e stato del Risk Guardian.
+
+File main.py: Il punto di ingresso principale che avvia l'orchestratore e la dashboard.
+
+OUTPUT FINALE RICHIESTO:
+L'intera struttura del progetto, file per file, seguendo questa guida definitiva. Il risultato sarà un progetto non solo visionario, ma anche ingegneristicamente solido, sicuro e pronto per affrontare le sfide del mondo reale con l'hardware a disposizione.

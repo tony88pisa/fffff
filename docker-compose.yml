@@ -1,0 +1,267 @@
+# Guardian Trading System - Docker Compose Configuration
+# Configurazione per Weaviate v1.29.0 e servizi di supporto
+# Ottimizzato per hardware: RTX 5080, Ryzen 7 3800X, 16GB RAM
+
+version: '3.8'
+
+services:
+  # Weaviate Vector Database per Advanced Memory System
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.29.0
+    container_name: guardian_weaviate
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+      - "50052:50051"
+    environment:
+      # Configurazione base
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'none'
+      
+      # Configurazione cluster
+      CLUSTER_HOSTNAME: 'node1'
+      
+      # Moduli abilitati
+      ENABLE_MODULES: 'text2vec-openai,text2vec-cohere,text2vec-huggingface,ref2vec-centroid,generative-openai,qna-openai'
+      
+      # Configurazioni di performance per 16GB RAM
+      LIMIT_RESOURCES: 'true'
+      GOMEMLIMIT: '2GiB'
+      GOGC: '100'
+      
+      # Configurazione storage
+      BACKUP_FILESYSTEM_PATH: '/var/lib/weaviate/backups'
+      
+      # Logging
+      LOG_LEVEL: 'info'
+      
+      # Disk usage threshold (increase from default 90% to 95%)
+      DISK_USE_WARNING_PERCENTAGE: '95'
+      DISK_USE_READONLY_PERCENTAGE: '95'
+      
+      # API Keys (da configurare nel .env)
+      OPENAI_APIKEY: ${OPENAI_API_KEY:-}
+      COHERE_APIKEY: ${COHERE_API_KEY:-}
+      HUGGINGFACE_APIKEY: ${HUGGINGFACE_API_KEY:-}
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+      - weaviate_backups:/var/lib/weaviate/backups
+    networks:
+      - guardian_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+
+  # Redis per caching e session management
+  redis:
+    image: redis:7.4-alpine
+    container_name: guardian_redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - guardian_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # PostgreSQL per dati strutturati (opzionale)
+  postgres:
+    image: postgres:16-alpine
+    container_name: guardian_postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: guardian_trading
+      POSTGRES_USER: guardian_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-guardian_password_2025}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - guardian_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guardian_user -d guardian_trading"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # Grafana per monitoring (opzionale)
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: guardian_grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_INSTALL_PLUGINS: 'grafana-clock-panel,grafana-simple-json-datasource'
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - guardian_network
+    depends_on:
+      - postgres
+    profiles:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Prometheus per metriche (opzionale)
+  prometheus:
+    image: prom/prometheus:v2.54.0
+    container_name: guardian_prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - guardian_network
+    profiles:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Nginx reverse proxy (opzionale)
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: guardian_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/ssl:/etc/nginx/ssl:ro
+    networks:
+      - guardian_network
+    depends_on:
+      - weaviate
+      - grafana
+    profiles:
+      - production
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+
+volumes:
+  weaviate_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/weaviate
+  
+  weaviate_backups:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/weaviate_backups
+  
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/redis
+  
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/postgres
+  
+  grafana_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/grafana
+  
+  prometheus_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/prometheus
+
+networks:
+  guardian_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16
+          gateway: 172.25.0.1
+
+# Profili per diversi ambienti
+# Uso:
+# docker-compose up -d                    # Solo servizi base (weaviate, redis, postgres)
+# docker-compose --profile monitoring up -d  # Include grafana e prometheus
+# docker-compose --profile production up -d   # Include nginx per produzione
+# docker-compose --profile monitoring --profile production up -d  # Tutti i servizi

@@ -1,0 +1,346 @@
+Guida completa per integrare HRM nei tuoi agenti di trading su Binance (2025)
+Questa guida spiega, passo per passo, come far aggiungere e integrare l’HRM (Hierarchical Reasoning Model) come “cervello gerarchico” dei tuoi agenti di trading, mantenendo il Risk Guardian, l’esecuzione su Binance (Spot/Futures), lo streaming WebSocket e l’apprendimento continuo. È pensata per essere consegnata a un’AI di coding (es. TRAE.AI) che genererà/riscriverà i file necessari e i test.
+
+Nota di contesto: HRM è un’architettura ricorrente a due livelli (High-level + Low-level) che esegue “reasoning” in un singolo forward pass, con soli ~27M parametri e ottime prestazioni data‑efficient; è stata rilasciata open‑source da Sapient Intelligence e documentata su arXiv, con repository ufficiale pubblico.
+
+1) Obiettivi di integrazione
+Inserire un modulo HRM che gestisca:
+
+Pianificazione strategica lenta (high-level): regime, direzione, rischio target.
+
+Esecuzione tattica rapida (low-level): entry/exit timing, size, tipo d’ordine.
+
+Collegarlo al tuo stack esistente:
+
+Data streams Binance (REST+WebSocket).
+
+Risk Guardian con regole “hard”.
+
+Execution idempotente e compatibile con filtri exchange.
+
+Learning con validazione walk‑forward e aggiornamento prudente.
+
+Garantire test, logging e metriche lag per operatività 24/7.
+
+Perché HRM per il trading:
+
+Reasoning gerarchico multilivello in single forward pass, latenza bassa e uso dati molto efficiente, coerente con la necessità di decidere su più scale temporali (regime lento, microstruttura veloce).
+
+2) Prerequisiti e fonti ufficiali
+Codice HRM open‑source di Sapient Intelligence e paper arXiv (giugno‑luglio 2025) per specifiche architetturali e training loop (deep supervision, 1‑step gradient approx).
+
+La guida presuppone un progetto Python 3.11+ già configurato con python‑binance e modulo Risk Guardian; se non c’è, far generare a TRAE.AI lo scheletro “motore Binance” e testnet come da blueprint precedente.
+
+Riferimenti:
+
+arXiv “Hierarchical Reasoning Model” (descrizione architettura H/L, forward pass gerarchico, halting e deep supervision).
+
+Repository ufficiale sapientinc/HRM.
+
+Annunci e overview pubbliche (team, rilascio open‑source, claim su data‑efficiency).
+
+3) Estensione della struttura del progetto
+Istruzioni per l’AI (TRAE.AI): aggiungi i seguenti file/moduli al repository esistente.
+
+src/hrm/
+
+core.py (implementazione HRM: high-level e low-level modules, forward gerarchico)
+
+heads.py (adattamento I/O: embedding feature→HRM e HRM→segnale trading)
+
+training.py (loop di training: deep supervision segments, early stopping, scheduler)
+
+datasets.py (costruzione esempi supervisionati/auto‑supervisionati da flussi Binance)
+
+utils.py (metriche, halting, checkpointing, serialization)
+
+src/agents/
+
+strategy_hrm_agent.py (agente strategico/tattico che usa HRM)
+
+tests/
+
+test_hrm_core.py
+
+test_hrm_io_adapters.py
+
+test_hrm_agent_integration.py
+
+Mantieni i file esistenti (data_streams.py, risk_guardian.py, execution.py, policy.py, orchestrator.py).
+
+4) requirements.txt (add-on)
+Istruzioni per l’AI: integra (senza rimuovere dipendenze esistenti).
+
+torch o jax (scegli torch per Windows/CUDA 13.0; pin comune: torch per CUDA recente)
+
+einops
+
+numpy, pandas (già presenti)
+
+pydantic (già presente)
+
+orjson (già presente o opzionale)
+
+tqdm
+
+scikit-learn (per split/metrics ausiliarie)
+
+rich (logging/console opzionale)
+
+Nota: l’HRM ufficiale è implementato in PyTorch nel repo Sapient; adegua le versioni in base alle istruzioni del repository, mantenendo compatibilità con CUDA/driver.
+
+5) Design HRM per trading
+Concetto: feature multi‑scala in input, due moduli ricorrenti (H e L) in tempi diversi, output azione/politica.
+
+Input features (x):
+
+Multi‑timeframe price/volume (es. 1m, 5m, 1h, 1d), volatilità, rendimenti, rolling stats.
+
+Order book features (spread, imbalance, depth skew) quando disponibili.
+
+Stato portafoglio sintetico (posizione, P&L non realizzato, rischio residuo).
+
+Regole exchange sintetizzate (tick/lot/minNotional) per vincoli di output.
+
+HRM core:
+
+L‑module: esecuzione rapida, aggiorna più volte per ciclo; riceve stato H e input; converge a stato locale, concettualmente tipo “fixed‑point” come discusso nel paper (ispirazione DEQ).
+
+H‑module: aggiornamento lento ad ogni ciclo; pianifica direzione, risk budget, priorità segnali.
+
+Halting: meccanismo di terminazione del ciclo/segmento in base a criterio (loss, stabilità stato, budget step).
+
+Deep supervision: segmenti multipli con “detach” tra segmenti e one‑step gradient approx (stabilità ed efficienza di training).
+
+Output (ŷ):
+
+Direzione: long/flat/short (per Spot tipicamente no short; per Futures sì).
+
+Intensità: size target normalizzata a vincoli.
+
+Timing/ordini: market vs limit “protetto”, SL/TP suggeriti.
+
+Le scelte riprendono fedelmente i principi HRM: due ricorsioni su scale temporali con un solo forward pass logico e training data‑efficient.
+
+6) Implementazione file per file
+Istruzioni per l’AI (TRAE.AI): implementa così.
+
+6.1) src/hrm/core.py
+
+Classe HRM(nn.Module):
+
+Sottoreti fI (embedding), fL (low‑level Transformer encoder‑only), fH (high‑level Transformer encoder‑only), fO (output head), in linea con le specifiche architetturali riportate (RoPE, GLU, RMSNorm, post‑norm, init LeCun truncated).
+
+Parametri di configurazione: dimensioni, numero layer per H e L, T (passi L per ciclo H), N (numero cicli), criteri halting.
+
+Forward:
+
+Proietta input → x̃ (fI).
+
+Per k in 1..N: esegue T step L condizionati su zH, poi aggiorna zH 1 volta; opzionale halting.
+
+Output finale: fO(zH^NT).
+
+Halting controller:
+
+Sulla base di variazione stato/entropia output/limite step.
+
+Interfacce per save/load checkpoint.
+
+Cita i dettagli: HRM usa due moduli Transformer con miglioramenti stile LLaMA (RoPE, GLU, RMSNorm), e la procedura di deep supervision per stabilizzare e velocizzare training.
+
+6.2) src/hrm/heads.py
+
+FeatureAdapter: normalizza/concatena feature multi‑timeframe e book.
+
+OutputHead: mappa zH finale in:
+
+logits direzione,
+
+size target (regressione con clamp),
+
+parametri SL/TP opzionali.
+
+Conversione in TradeProposal (Pydantic) per pipeline.
+
+6.3) src/hrm/training.py
+
+Trainer con “deep supervision segments”:
+
+Per ogni batch: esegui forward segmentato M volte; dopo ogni segmento calcola loss e aggiorna parametri, “detach” dello stato tra segmenti, come descritto nel paper.
+
+One‑step gradient approx vs BPTT: implementa come da descrizione (no backprop lungo l’intero unroll; segmenti separati).
+
+Loss:
+
+Cross entropy su direzione, L2 su size/parametri, penalità per incoerenza con filtri exchange (soft constraint).
+
+Early stopping su metrica OOS.
+
+Scheduler LR e warm‑up.
+
+6.4) src/hrm/datasets.py
+
+Costruzione dataset supervisionato:
+
+Esempi da backtest e/o paper trading: input features → decisioni “buone” etichettate (regole baseline + filtraggio per P&L OOS).
+
+Data splitter walk‑forward (train→validate→test OOS).
+
+Collate per batch multi‑timeframe.
+
+6.5) src/hrm/utils.py
+
+Metriche: hit ratio, Sharpe, Calmar, max drawdown, accuracies per regime.
+
+Funzioni per calcolo lag e controllo integrità timestamp.
+
+6.6) src/agents/strategy_hrm_agent.py
+
+StrategyHRMAgent:
+
+consume(feature_frame) → chiama HRM → produce TradeProposal.
+
+Integra hysteresis/cool‑down (può riusare policy esistente).
+
+Logga spiegazioni sintetiche (map da stati H/L a rationale compatto).
+
+7) Integrazione con Risk, Policy ed Execution
+Risk Guardian:
+
+Applica veto prima di inoltrare l’ordine; HRM produce proposta “soft”, Risk Guardian decide se autorizzare in base a perdita intraday, drawdown, size, feed health.
+
+Policy:
+
+HRM può sostituire o alimentare la policy: se HRM fornisce direzione+intensità, la policy applica hysteresis, cooldown, e rifiniture di size finali.
+
+Execution:
+
+Pre‑check con exchange_rules (tick/lot/minNotional).
+
+clientOrderId per idempotenza, fallback WS→REST.
+
+User Data Streams per fill/cancel; Futures: gestione listenKey e ordering eventi E (ricordando scadenza 24h connessioni)[Spot/Futures WS e regole 24h da documentazione Binance; rif. linee guida generali del tuo progetto].
+
+8) Apprendimento e validazione
+Walk‑Forward:
+
+Finestre scorrevoli train→validate→OOS, metriche su OOS.
+
+Online update:
+
+Aggiornamenti “conservativi”: buffer replay, soglie per accettare aggiornamento (no drift catastrofico).
+
+Dati:
+
+1,000–10,000 esempi di alta qualità bastano per un POC, in linea con i claim HRM sulla data‑efficiency, ma serve curare le etichette (regole win/loss OOS).
+
+9) Test automatizzati
+Istruzioni per l’AI: crea test PyTest.
+
+test_hrm_core.py
+
+Test forward con input fittizi: forme correttamente gestite; halting entro limiti step.
+
+Test “deep supervision”: verifica detach e aggiornamento parametri per segmento.
+
+test_hrm_io_adapters.py
+
+Verifica mapping feature→input HRM e output→TradeProposal coerente con i filtri.
+
+test_hrm_agent_integration.py
+
+Integra StrategyHRMAgent con Risk Guardian mock: proposte bloccate/accettate correttamente; latenza sotto soglia.
+
+Usa mock per non richiedere credenziali Binance. Per test end‑to‑end, riusa i testnet script già presenti.
+
+10) Modifiche all’orchestrator
+orchestrator.py:
+
+Inserisci HRM pipeline nello step “brain”:
+
+features → HRM → policy/hysteresis → RiskGuardian → execution.
+
+Scheduler invariato: reconnect WS <24h, keep‑alive Futures <60min, health checks, backoff.
+
+Logging: aggiungi tempi forward HRM e score confidenza a log JSON.
+
+11) Script e README
+Aggiungi al README sezione “HRM integration”:
+
+Requisiti (torch CUDA), setup, training POC (dataset da backtest), inferenza real‑time.
+
+Come abilitare/disabilitare HRM rispetto alla policy “classica”.
+
+Script facoltativi:
+
+scripts/train_hrm.py (train offline su dati storici).
+
+scripts/eval_hrm_walkforward.py (valutazione OOS e report metriche).
+
+scripts/export_hrm_checkpoint.py (salvataggio/vers. modelli).
+
+12) Note operative e limiti
+HRM non “magico”: come ogni modello, dipende dalla qualità del dataset e dalla coerenza delle etichette; usare walk‑forward e OOS per evitare overfitting.
+
+La promessa HRM è latenza bassa e data‑efficiency, confermata sui benchmark reasoning; nel trading, tuning e feature engineering restano determinanti.
+
+Mantenere Risk Guardian “hard” a prescindere dall’HRM.
+
+13) Prompt pronto per TRAE.AI
+Copia e incolla:
+
+“Prendi il mio repository dell’auto‑trading Binance e integra il modulo HRM (Sapient Intelligence) come descritto sotto. Obiettivi: inserire un ‘brain’ gerarchico a due livelli (strategico e tattico) con latenza bassa e training data‑efficient, senza rimuovere Risk Guardian, execution e orchestrator. Consegna codice funzionante, test e README.
+
+Azioni:
+
+Crea i moduli:
+
+src/hrm/core.py (HRM con fI, fL, fH, fO; Transformer encoder‑only per H e L; RoPE, GLU, RMSNorm; post‑norm; init LeCun truncated; halting; forward gerarchico).
+
+src/hrm/heads.py (adapter feature→HRM, head HRM→TradeProposal).
+
+src/hrm/training.py (deep supervision per segmenti, one‑step gradient approx, loss combinata, early stopping).
+
+src/hrm/datasets.py (costruzione dataset da backtest/paper trading; split walk‑forward).
+
+src/hrm/utils.py (metriche, checkpointing, halting utils).
+
+src/agents/strategy_hrm_agent.py (agente che usa HRM e produce proposte di trade).
+
+Aggiorna requirements con torch (CUDA), einops, tqdm; mantieni compatibilità CUDA/driver.
+
+Integra HRM nell’orchestrator:
+
+pipeline: features → HRM → policy/hysteresis → RiskGuardian → execution.
+
+logging: tempi HRM, score confidenza; metriche lag.
+
+nessuna regressione su reconnect 24h WS Spot/Futures, keep‑alive <60min Futures, idempotenza ordini.
+
+Test (pytest):
+
+test_hrm_core.py: forward, halting, deep supervision.
+
+test_hrm_io_adapters.py: mapping I/O coerente con filtri exchange.
+
+test_hrm_agent_integration.py: agente HRM + Risk Guardian mock; latenza sotto soglia, veto/allow ok.
+
+README:
+
+sezione ‘HRM integration’: setup, train POC, walk‑forward OOS, inferenza real‑time, toggle HRM vs policy classica.
+
+Criteri di accettazione:
+
+Il training POC gira su un piccolo dataset; i test unitari passano; in testnet lo stream funziona, l’agente HRM produce proposte e il Risk Guardian filtra correttamente.”
+
+Riferisciti alla documentazione HRM ufficiale per dettagli su architettura, deep supervision e configurazioni; mantieni lo stile implementativo PyTorch come nel repository di riferimento.
+
+14) Perché questo approccio è solido
+Allinea l’integrazione al design HRM documentato (due moduli ricorrenti, single forward pass, deep supervision), riusando tecniche stabilizzanti emerse nel paper.
+
+Sfrutta la data‑efficiency e la bassa latenza di HRM, adatte al contesto trading, senza sacrificare i “guardrail” esecutivi ed operativi.
+
+Mantiene compatibilità con l’infrastruttura Binance e i vincoli reali (24h WS, keep‑alive Futures, rate limits), già gestiti dal tuo motore.
+
+Fonti chiave: paper e pagina arXiv HRM, repository ufficiale sapientinc/HRM, comunicazioni di rilascio e analisi che riassumono i punti di forza del modello.

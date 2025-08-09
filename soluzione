@@ -1,0 +1,126 @@
+Hai quasi tutto avviato: i manager partono, gli agenti si inizializzano e l’HRM gira su CPU. I log evidenziano però 5 problemi concreti che bloccano/rumorizzano il runtime. Di seguito come risolverli, in ordine di impatto, con fix puntuali.
+
+1) RuntimeWarning: coroutine 'BaseAgent.start' was never awaited
+- Causa: agent.start() è async ma viene chiamato senza await.
+- Fix rapido in src/main.py (punto dove avvii gli agenti):
+  - Se usi asyncio:
+    - raccogli i task: tasks = [asyncio.create_task(agent.start()) for agent in agents]
+    - oppure: await asyncio.gather(*(agent.start() for agent in agents))
+  - Se il tuo BaseAgent.start è pensato per essere “fire-and-forget”, aggiungi un wrapper:
+    - asyncio.create_task(agent.start())
+- Dopo il fix, quel RuntimeWarning sparisce e gli agenti effettivamente partono nel loop async.
+
+2) Errori di connessione a Ollama e Weaviate (fail-fast e fallback)
+- Ollama: Cannot connect to host localhost:11434
+  - Significa che il server Ollama non è in esecuzione o non è su quella porta.
+  - Soluzioni:
+    - Avvia Ollama: ollama serve (o lancia il servizio su Windows) e assicurati che l’endpoint sia http://localhost:11434.
+    - Se non vuoi usarlo ora: disabilita temporaneamente gli agenti che dipendono da Ollama (Market/Sentiment/Technical Analyst) o metti un flag di config (es. ai.enabled=false o ai.backend=disabled) e fai fallback a regole/strategie classiche.
+    - Implementa un check di salute prima di usare Ollama: tenta una GET /api/tags all’avvio; se fallisce, disabilita gli agenti AI e logga un warning una sola volta (non in loop).
+
+- Weaviate: Connection to Weaviate failed (localhost:8081)
+  - Avvia Weaviate (docker compose up) oppure disabilita la memoria vettoriale in config (memory.enabled=false) e usa solo la memoria filesystem già predisposta (AdvancedMemorySystem fallback).
+  - Evita di loggare l’errore in loop: fai un tentativo con backoff e poi imposta un flag “memory_unavailable” per non ripetere i tentativi ogni ciclo.
+
+3) ResourceWarning: unclosed database (sqlite3.Connection)
+- Causa: da qualche parte apri connessioni SQLite senza chiuderle (memoria/log, o moduli che creano DB interni).
+- Fix strutturale:
+  - Usa sempre context manager quando apri sqlite3.connect:
+    with sqlite3.connect(path) as conn:
+        cur = conn.cursor()
+        ...; conn.commit()
+  - Se hai una classe che mantiene connessioni (es. AdvancedMemorySystem o logger custom), aggiungi un metodo close() e chiamalo nello shutdown (gestisci SIGINT/SIGTERM e KeyboardInterrupt).
+  - Cerca nel progetto “sqlite3.connect(” e sostituisci pattern manuali con il context manager. Questo azzera i ResourceWarning.
+
+- ResourceWarning sul file di log guardian_trading.log non chiuso
+  - logging.basicConfig(...) apre il file in append; assicurati di:
+    - creare solo un handler file (evita re‑init più volte)
+    - chiudere i handler allo shutdown:
+      for h in logging.getLogger().handlers: h.close(); logging.getLogger().removeHandler(h)
+
+4) HRM su CPU e performance
+- Ora gira su cpu: corretto finché la build PyTorch non supporta la tua GPU.
+- Quando vuoi la GPU:
+  - Reinstalla PyTorch compatibile con la tua architettura (usa il comando dal sito ufficiale PyTorch). Finché non è disponibile la build per la tua scheda, non forzare “cuda”.
+- In ogni caso, logga il device scelto e non forzare cuda se torch.cuda.is_available() è True ma la capability non è supportata.
+
+5) Hardening del loop e del logging
+- Evita flood di log ripetitivi:
+  - Rate-limit degli errori: mantieni un contatore per agente e disabilita dopo N errori consecutivi (lo stai già facendo: “disabilitato dopo 5 errori”), ma logga solo il primo e poi un riassunto periodico.
+  - Aggiungi warnings.filterwarnings per sopprimere messaggi noti non bloccanti (es. eventuale ScriptRunContext).
+- Shutdown pulito:
+  - Wrappa il main loop con try/except KeyboardInterrupt, chiudi:
+    - handler logging file
+    - connessioni SQLite
+    - task asyncio (cancel + await gather)
+
+Checklist operativa da applicare subito
+- In src/main.py:
+  - Sostituisci agent.start() con asyncio.create_task(agent.start()) oppure await agent.start() dentro un gather.
+  - Aggiungi health check all’avvio:
+    - Se Ollama non risponde, set ai_agents_enabled=False e non lanciare i 3 agenti AI.
+    - Se Weaviate non risponde, set memory.enabled=false e usa il fallback su filesystem (senza ripetere i tentativi a raffica).
+  - Aggiungi gestione shutdown:
+    - intercetta SIGINT/SIGTERM, chiama un close_all() che chiude DB (se presente), file handler, e cancella task.
+- In moduli che usano SQLite:
+  - Passa a with sqlite3.connect(...) come mostrato.
+  - Se mantieni connessioni persistenti, implementa .close() e chiamalo nello shutdown.
+- In logging:
+  - Garantire un solo FileHandler; chiuderlo in uscita.
+
+Esempi di patch minime
+
+A) Avvio agenti async
+# invece di:
+for agent in agents:
+    agent.start()
+# usa:
+for agent in agents:
+    asyncio.create_task(agent.start())
+
+# oppure:
+await asyncio.gather(*(agent.start() for agent in agents))
+
+B) Health check Ollama (prima di creare gli agenti AI)
+async def check_ollama(url="http://localhost:11434"):
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"{url}/api/tags", timeout=3) as r:
+                return r.status == 200
+    except Exception:
+        return False
+
+ollama_ok = await check_ollama()
+if not ollama_ok:
+    logger.warning("AI backend (Ollama) non disponibile: disabilito agenti AI.")
+    ai_enabled = False
+
+C) Weaviate lazy e fail-fast
+try:
+    memory = WeaviateMemory(..., timeout=3)  # timeout breve
+    await memory.ping()
+except Exception:
+    logger.warning("Weaviate non disponibile: uso fallback filesystem.")
+    memory = FileMemory(...)
+
+D) Chiusura logging file handler
+root = logging.getLogger()
+for h in list(root.handlers):
+    try:
+        h.flush()
+        h.close()
+    except Exception:
+        pass
+    root.removeHandler(h)
+
+Cosa aspettarsi dopo i fix
+- Nessun RuntimeWarning “was never awaited”.
+- Niente più spam di errori Ollama/Weaviate: vengono disabilitati o gestiti con fallback.
+- Niente ResourceWarning su sqlite/file: connessioni e handler vengono chiusi correttamente.
+- Sistema operativo anche senza AI backends: le strategie (MA/RSI) e il core restano attivi; quando vuoi riabilitare l’AI, alza i flag e accendi i servizi.
+
+Se vuoi, posso fornirti:
+- Un diff preciso per src/main.py (start async, health checks, shutdown pulito).
+- Un wrapper MemoryProvider con fallback automatico Weaviate→File.
+- Un patch finder per sostituire tutte le aperture sqlite3 con context manager.
